@@ -8,7 +8,7 @@ from pathlib import Path
 # ---------- SETTINGS ----------
 DRY_RUN = True            # True = only list what would be deleted. False = really delete.
 INSTALL_UPDATES = True   # True = actually install updates. False = only report them.
-SKIP_DRIVERS_ON_INSTALL = True   # True = install updates but leave driver updates out
+SKIP_DRIVERS_ON_INSTALL = False  # False = install driver updates too. True = leave drivers out
 MAX_AGE_DAYS = 0          # only delete items older than this
 LOG_FILE = Path.home() / "weekly_maintenance.log"
 
@@ -104,7 +104,8 @@ def install_updates():
         log("Update install is OFF (INSTALL_UPDATES = False). Skipping.")
         return
 
-    log("Installing updates (this can take a while)...")
+    scope = "Windows updates only, drivers skipped" if SKIP_DRIVERS_ON_INSTALL else "Windows + driver updates"
+    log(f"Installing {scope} (this can take a while)...")
     command = "Install-WindowsUpdate -MicrosoftUpdate -AcceptAll -IgnoreReboot"
     if SKIP_DRIVERS_ON_INSTALL:
         command += " -NotCategory 'Drivers'"

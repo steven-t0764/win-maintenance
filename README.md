@@ -9,7 +9,7 @@ A Python script that handles routine Windows upkeep in one run:
 - Clears old files out of the user and system **temp folders**
 - Checks for **Windows and Microsoft product updates**
 - Checks for **driver updates**
-- Optionally **installs updates** (with drivers left out by default)
+- **Installs Windows and driver updates** (drivers can be switched off)
 - Lists any **devices reporting driver errors** in Device Manager
 - Writes everything to a **log file** so you can see what happened
 
@@ -45,7 +45,7 @@ All behaviour is controlled by the constants at the top of the file, so you neve
 ```python
 DRY_RUN = True                 # True = only list what would be deleted
 INSTALL_UPDATES = True         # True = actually install updates
-SKIP_DRIVERS_ON_INSTALL = True # install updates but leave drivers out
+SKIP_DRIVERS_ON_INSTALL = False # False = install drivers too
 MAX_AGE_DAYS = 0               # only delete temp items older than this
 LOG_FILE = Path.home() / "weekly_maintenance.log"
 
@@ -82,15 +82,17 @@ Get-WindowsUpdate -MicrosoftUpdate -UpdateType Driver # drivers only
 
 ### 5. Installing updates — `install_updates()`
 
-Skipped entirely when `INSTALL_UPDATES = False`. Otherwise it runs:
+Skipped entirely when `INSTALL_UPDATES = False`. Otherwise it installs Windows, Microsoft product **and driver** updates:
 
 ```powershell
-Install-WindowsUpdate -MicrosoftUpdate -AcceptAll -IgnoreReboot -NotCategory 'Drivers'
+Install-WindowsUpdate -MicrosoftUpdate -AcceptAll -IgnoreReboot
 ```
 
 - `-AcceptAll` — no interactive prompts
 - `-IgnoreReboot` — never restarts the PC on its own
-- `-NotCategory 'Drivers'` — added only when `SKIP_DRIVERS_ON_INSTALL = True`, so drivers are reported but not auto-installed (driver updates are the most likely to cause problems)
+- Driver updates are **installed along with everything else** by default. Set `SKIP_DRIVERS_ON_INSTALL = True` to add `-NotCategory 'Drivers'` and only report them instead.
+
+> **Heads-up:** drivers from Windows Update can be generic or older than the manufacturer's (graphics cards especially). If an update breaks Wi-Fi, audio or display, roll it back in **Device Manager › Properties › Driver › Roll Back Driver**, then set `SKIP_DRIVERS_ON_INSTALL = True` or install that driver from the manufacturer's site.
 
 Afterwards it calls `Get-WURebootStatus -Silent` and logs whether a restart is needed.
 
@@ -128,7 +130,8 @@ start log → clean each temp folder → check updates → check drivers
 | Goal | Settings |
 |---|---|
 | Just see what's going on | `DRY_RUN = True`, `INSTALL_UPDATES = False` |
-| Normal weekly run | `DRY_RUN = False`, `INSTALL_UPDATES = True`, `SKIP_DRIVERS_ON_INSTALL = True` |
+| Normal weekly run | `DRY_RUN = False`, `INSTALL_UPDATES = True`, `SKIP_DRIVERS_ON_INSTALL = False` |
+| Updates without drivers | same, but `SKIP_DRIVERS_ON_INSTALL = True` |
 | Safer temp cleanup | `MAX_AGE_DAYS = 7` — leaves anything touched in the last week |
 
 > **Note:** with `MAX_AGE_DAYS = 0` every item in the temp folders is eligible for deletion. Items that are currently in use are skipped automatically, but a value like `7` is gentler on apps that keep temp files between sessions.

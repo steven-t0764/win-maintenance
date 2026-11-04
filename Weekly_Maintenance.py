@@ -1,3 +1,4 @@
+import os
 import shutil
 import subprocess
 import tempfile
@@ -6,15 +7,27 @@ from datetime import datetime
 from pathlib import Path
 
 # ---------- SETTINGS ----------
-DRY_RUN = True            # True = only list what would be deleted. False = really delete.
-INSTALL_UPDATES = True   # True = actually install updates. False = only report them.
-SKIP_DRIVERS_ON_INSTALL = False  # False = install driver updates too. True = leave drivers out
-MAX_AGE_DAYS = 0          # only delete items older than this
+DRY_RUN = False            # True = only report what would happen. False = really do it.
+INSTALL_UPDATES = True   # True = install updates. False = only report them.
+SKIP_DRIVERS_ON_INSTALL = False   # False = install driver updates too. True = leave drivers out
+CLOSE_APPS = True        # True = close open apps before cleaning temp files
+FORCE_CLOSE = True       # True = kill apps that won't close (UNSAVED WORK IS LOST)
+CLOSE_WAIT_SECONDS = 45   # how long to let apps close on their own
+RESTART_AFTER = True     # True = restart the computer when everything is done
+RESTART_DELAY_SECONDS = 120   # countdown before restart. Cancel with: shutdown /a
+MAX_AGE_DAYS = 7          # only delete items older than this
 LOG_FILE = Path.home() / "weekly_maintenance.log"
 
 TEMP_DIRS = [
     Path(tempfile.gettempdir()),   # user temp
     Path(r"C:\Windows\Temp"),      # system temp (needs admin)
+]
+
+# Apps that must never be closed (the script runs inside some of these)
+PROTECTED_APPS = [
+    "explorer", "powershell", "pwsh", "cmd", "conhost", "WindowsTerminal",
+    "OpenConsole", "ApplicationFrameHost", "TextInputHost", "SystemSettings",
+    "ShellExperienceHost", "StartMenuExperienceHost", "SearchHost", "LockApp",
 ]
 # ------------------------------
 
@@ -43,6 +56,54 @@ def get_size(item):
         return sum(f.stat().st_size for f in item.rglob("*") if f.is_file())
     except OSError:
         return 0
+
+
+def open_apps_filter():
+    """PowerShell snippet that selects apps with a visible window, minus protected ones."""
+    protected = ",".join(f"'{name}'" for name in PROTECTED_APPS)
+    return (
+        f"$skip = @({protected}); "
+        "Get-Process | Where-Object { $_.MainWindowHandle -ne 0 "
+        f"-and $_.Id -ne {os.getpid()} "
+        "-and $_.ProcessName -notlike 'python*' "
+        "-and $skip -notcontains $_.ProcessName }"
+    )
+
+
+def list_open_apps():
+    code, out, err = run_powershell(
+        open_apps_filter() + " | Select-Object -ExpandProperty ProcessName | Sort-Object -Unique"
+    )
+    return out.splitlines() if code == 0 and out else []
+
+
+def close_apps():
+    if not CLOSE_APPS:
+        log("Close apps is OFF (CLOSE_APPS = False). Skipping.")
+        return
+
+    apps = list_open_apps()
+    if not apps:
+        log("No open apps to close.")
+        return
+
+    if DRY_RUN:
+        log(f"[dry run] would close: {', '.join(apps)}")
+        return
+
+    log(f"Closing apps politely: {', '.join(apps)}")
+    run_powershell(open_apps_filter() + " | ForEach-Object { $_.CloseMainWindow() | Out-Null }")
+    time.sleep(CLOSE_WAIT_SECONDS)
+
+    remaining = list_open_apps()
+    if not remaining:
+        log("All apps closed.")
+    elif FORCE_CLOSE:
+        log(f"Force-closing apps that did not close: {', '.join(remaining)}")
+        run_powershell(open_apps_filter() + " | Stop-Process -Force")
+        time.sleep(3)
+    else:
+        log(f"Still open (FORCE_CLOSE is off): {', '.join(remaining)}")
 
 
 def clean_temp(folder):
@@ -103,9 +164,11 @@ def install_updates():
     if not INSTALL_UPDATES:
         log("Update install is OFF (INSTALL_UPDATES = False). Skipping.")
         return
+    if DRY_RUN:
+        log("[dry run] would install updates. Skipping.")
+        return
 
-    scope = "Windows updates only, drivers skipped" if SKIP_DRIVERS_ON_INSTALL else "Windows + driver updates"
-    log(f"Installing {scope} (this can take a while)...")
+    log("Installing updates (this can take a while)...")
     command = "Install-WindowsUpdate -MicrosoftUpdate -AcceptAll -IgnoreReboot"
     if SKIP_DRIVERS_ON_INSTALL:
         command += " -NotCategory 'Drivers'"
@@ -118,7 +181,7 @@ def install_updates():
 
     code, out, err = run_powershell("Get-WURebootStatus -Silent")
     if out.strip().lower() == "true":
-        log("RESTART REQUIRED to finish updates. Restart when convenient.")
+        log("RESTART REQUIRED to finish updates.")
     else:
         log("No restart required.")
 
@@ -139,9 +202,23 @@ def check_problem_devices():
         log("No devices reporting driver problems.")
 
 
+def restart_computer():
+    if not RESTART_AFTER:
+        log("Restart is OFF (RESTART_AFTER = False). Skipping.")
+        return
+    if DRY_RUN:
+        log(f"[dry run] would restart in {RESTART_DELAY_SECONDS} seconds")
+        return
+    log(f"Restarting in {RESTART_DELAY_SECONDS} seconds. To cancel, run: shutdown /a")
+    subprocess.run(["shutdown", "/r", "/t", str(RESTART_DELAY_SECONDS),
+                    "/c", "Weekly maintenance restart"])
+
+
 if __name__ == "__main__":
-    log(f"=== Weekly maintenance started "
-        f"(DRY_RUN={DRY_RUN}, INSTALL_UPDATES={INSTALL_UPDATES}) ===")
+    log(f"=== Weekly maintenance started (DRY_RUN={DRY_RUN}, "
+        f"INSTALL_UPDATES={INSTALL_UPDATES}, CLOSE_APPS={CLOSE_APPS}, "
+        f"RESTART_AFTER={RESTART_AFTER}) ===")
+    close_apps()
     for d in TEMP_DIRS:
         clean_temp(d)
     check_updates()
@@ -149,3 +226,4 @@ if __name__ == "__main__":
     install_updates()
     check_problem_devices()
     log("=== Done ===")
+    restart_computer()

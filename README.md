@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/terminal.svg" alt="Animated command prompt running Weekly_Maintenance.py" width="820">
+</p>
+
 # Windows Weekly Maintenance
 
 A Python script that handles routine Windows upkeep in one run:
